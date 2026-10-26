@@ -2,24 +2,39 @@ package main
 
 import (
 	"fmt"
-	"net/http"
 	"runtime"
+
+	"github.com/valyala/fasthttp"
 )
 
-func simpleHandler(w http.ResponseWriter, r *http.Request) {
-	w.Write([]byte("OK"))
+// RequestHandler handles incoming requests with zero allocations
+func fastHandler(ctx *fasthttp.RequestCtx) {
+	switch string(ctx.Path()) {
+	case "/simple":
+		ctx.SetContentType("text/plain; charset=utf8")
+		ctx.SetStatusCode(fasthttp.StatusOK)
+		ctx.SetBodyString("OK")
+	default:
+		ctx.Error("Not Found", fasthttp.StatusNotFound)
+	}
 }
 
 func main() {
-	// Yeh check karega ki Go kitne CPU cores use kar raha hai
 	numCores := runtime.NumCPU()
-	fmt.Printf("Go Server started on :8080 using %d CPU cores!\n", numCores)
+	fmt.Printf("Server started on :8080 using %d CPU cores!\n", numCores)
 
+	// fasthttp Server with optimized settings
+	server := &fasthttp.Server{
+		Handler:           fastHandler,
+		Name:              "1M-RPS-Server",
+		Concurrency:       256 * 1024,
+		ReadBufferSize:    4096,
+		WriteBufferSize:   4096,
+		ReduceMemoryUsage: true,
+	}
 
-	http.HandleFunc("/simple", simpleHandler)
-
-	err := http.ListenAndServe(":8080", nil)
-	if err != nil {
+	// fasthttp se listen karo!
+	if err := server.ListenAndServe(":8081"); err != nil {
 		fmt.Printf("Error starting server: %s\n", err)
 	}
 }
