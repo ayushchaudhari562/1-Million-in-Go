@@ -6,9 +6,13 @@ import (
 	"fmt"
 	"runtime"
 	"strconv"
+	"sync/atomic"
 
 	"github.com/valyala/fasthttp"
 )
+var writeQueue = make(chan Item, 200000)
+var totalWrites uint64 // Atomic counter
+
 
 type Item struct {
 	ID   int
