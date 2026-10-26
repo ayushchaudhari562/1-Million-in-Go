@@ -7,12 +7,33 @@ import (
 	"runtime"
 	"strconv"
 	"sync/atomic"
+	"time"
 
 	"github.com/valyala/fasthttp"
 )
+
 var writeQueue = make(chan Item, 200000)
 var totalWrites uint64 // Atomic counter
 
+func startBatchWorker() {
+	go func() {
+		batch := make([]Item, 0, 5000)
+		ticker := time.NewTicker(100 * time.Millisecond)
+		for {
+			select {
+			case item := <-writeQueue:
+				batch = append(batch, item)
+				if len(batch) >= 5000 {
+					batch = batch[:0]
+				}
+			case <-ticker.C:
+				if len(batch) > 0 {
+					batch = batch[:0]
+				}
+			}
+		}
+	}()
+}
 
 type Item struct {
 	ID   int
@@ -29,12 +50,12 @@ func generateDummyCode() string {
 }
 
 func initData() {
-	fmt.Println(" Pre-loading 100,000 real records into RAM...")
+	fmt.Println("Pre-loading 100,000 real records into RAM...")
 	dummy := generateDummyCode()
 	for i := 0; i < TOTAL_RECORDS; i++ {
 		memoryStore[i] = dummy
 	}
-	fmt.Println(" 100,000 records ready in RAM (Zero disk/network latency)!")
+	fmt.Println("100,000 records ready in RAM (Zero disk/network latency)!")
 }
 
 // RequestHandler handles incoming requests with zero allocations
@@ -55,13 +76,34 @@ func fastHandler(ctx *fasthttp.RequestCtx) {
 			}
 		}
 
-		// Nanosecond RAM lookup O(1)
 		code := memoryStore[id]
 
-		// Fast JSON response
 		ctx.SetContentType("application/json")
 		ctx.SetStatusCode(fasthttp.StatusOK)
 		fmt.Fprintf(ctx, `{"id":%d,"code":"%s"}`, id, code)
+
+	case "/code-write":
+		if !ctx.IsPost() {
+			ctx.Error("Method Not Allowed", fasthttp.StatusMethodNotAllowed)
+			return
+		}
+
+		newID := int(atomic.AddUint64(&totalWrites, 1))
+		newCode := generateDummyCode()
+
+		if newID < TOTAL_RECORDS {
+			memoryStore[newID] = newCode
+		}
+
+		// 2. Non-blocking channel me push karo
+		select {
+		case writeQueue <- Item{ID: newID, Code: newCode}:
+		default:
+		}
+
+		ctx.SetContentType("application/json")
+		ctx.SetStatusCode(fasthttp.StatusCreated)
+		fmt.Fprintf(ctx, `{"status":"queued","id":%d}`, newID)
 
 	default:
 		ctx.Error("Not Found", fasthttp.StatusNotFound)
@@ -70,10 +112,11 @@ func fastHandler(ctx *fasthttp.RequestCtx) {
 
 func main() {
 	numCores := runtime.NumCPU()
-	fmt.Printf("Server started on :8081 using %d CPU cores!\n", numCores)
+	fmt.Printf(" Server started on :8081 using %d CPU cores!\n", numCores)
 
-//data preloading in ram 
 	initData()
+
+	startBatchWorker()
 
 	server := &fasthttp.Server{
 		Handler:           fastHandler,
@@ -83,6 +126,7 @@ func main() {
 		WriteBufferSize:   4096,
 		ReduceMemoryUsage: true,
 	}
+
 	if err := server.ListenAndServe(":8081"); err != nil {
 		fmt.Printf("Error starting server: %s\n", err)
 	}

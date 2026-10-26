@@ -33,6 +33,9 @@ Every benchmark below was executed on identical 10-Core hardware with verified A
 ## 3. Deep-Dive: Core Engineering Concepts Explained
 
 ### A. The Latency Hierarchy (Why In-Process RAM Crushed Redis & Postgres)
+
+![Multi-Tier Storage and Hardware Latency Hierarchy](./img/latency_hierarchy.jpg)
+
 Computer hardware operates across vastly different timescales:
 
 ```
@@ -76,6 +79,16 @@ Standard `net/http` allocates new memory on the heap for every single request:
 * The Go Garbage Collector (GC) must frequently pause execution to clean up heap memory, causing latency jitter.
 * `fasthttp` eliminates this via **`sync.Pool`**: When a request completes, its `RequestCtx` buffer is not freed; it is returned to an in-memory pool and immediately recycled for the next incoming request.
 * **Result**: Zero heap allocations, reducing latency standard deviation from **5.15 ms down to 2.06 ms**!
+
+---
+
+### E. Non-Blocking Write-Behind Pattern (Goroutine Channels)
+
+![Non-Blocking Write-Behind Pattern using Golang Channels](./img/write_behind.jpg)
+
+* **User Zero-Wait**: The incoming `POST /code-write` request stores data directly into in-memory RAM in ~0.05ms, queues the task into an in-memory channel (`chan Item, 200000`), and returns `201 Created` in **< 1ms**.
+* **Zero Network Hop Queue**: Unlike Node.js which required `redis.lpush` over TCP, Go Channels pass raw memory pointers across CPU cores at nanosecond speeds.
+* **Batch Flushing**: Background Goroutines consume from the channel and flush records in batches of 5,000 to persistent storage, reducing disk I/O operations by **98%**.
 
 ---
 
