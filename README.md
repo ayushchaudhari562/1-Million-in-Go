@@ -22,39 +22,7 @@ A comprehensive technical study and benchmark progression comparing **Node.js** 
 
 ![Software Architecture Comparison: Node.js PM2 Cluster vs Golang GMP Model](./img/architecture.jpg)
 
-### Key Architectural Differences:
-
-```
-┌───────────────────────────────────────────────┐
-│              NODE.JS (PM2 CLUSTER)            │
-│                                               │
-│  [ PM2 Master Process ]                       │
-│    ├── Worker 1 (V8 Engine + 50MB RAM)        │
-│    ├── Worker 2 (V8 Engine + 50MB RAM)        │
-│    ├── ... (16 isolated processes)            │
-│    └── Worker 16 (V8 Engine + 50MB RAM)       │
-│                                               │
-│  1 Core Baseline: 32,680 RPS                  │
-│  16 Cores Max: 104,218 RPS                    │
-│  Bottleneck: OS process context switching,    │
-│  16 independent heaps, no shared memory.      │
-└───────────────────────────────────────────────┘
-
-                      VS
-
-┌───────────────────────────────────────────────┐
-│              GO (GMP SCHEDULER)               │
-│                                               │
-│  [ 1 Single Native Process (~15MB RAM) ]      │
-│    ├── 10 Logical Processors (GOMAXPROCS=10)  │
-│    ├── 10 OS Kernel Threads (M0 - M9)         │
-│    └── Tens of thousands of 2KB Goroutines    │
-│                                               │
-│  Starting Baseline: 196,480 RPS (Peak 203K)   │
-│  Advantage: Work-stealing across cores,       │
-│  Zero IPC, Netpoller non-blocking I/O.        │
-└───────────────────────────────────────────────┘
-```
+![Node.js PM2 Cluster vs Go GMP Scheduler Comparison](./img/pm2_vs_gmp.jpg)
 
 ---
 
