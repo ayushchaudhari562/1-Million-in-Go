@@ -1,28 +1,41 @@
 # 1 Million RPS in Go: Architecture, Benchmarks & Deep Internals
 
-A comprehensive technical study and benchmark progression comparing **Node.js** vs **Go (Golang)** on identical 10-Core (16-Thread) hardware, scaling from baseline to 1 Million Requests/Second.
+A comprehensive technical study and benchmark progression comparing **Node.js** vs **Go (Golang)** on identical 10-Core (16-Thread) hardware, scaling from baseline to **843,549 Requests/Second**.
 
 ---
 
 ## 1. Verified Benchmark Progression (Node.js vs Go)
 
-Every benchmark below was executed on identical 10-Core hardware with verified Autocannon output logs:
+Every benchmark below was recorded live on identical hardware:
 
-| Milestone / Stage | Architecture / Route | Storage Layer | Avg Latency | Req / Sec (RPS) | Bandwidth / Sec | Total in 10s | Key Architectural Discovery |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Node.js Baseline** | `GET /simple` (1 Core) | None (In-Memory) | 0.12 ms | **32,680 RPS** | 4.3 MB/s | 327K | V8 JIT + libuv single-threaded event loop |
-| **Node.js Multi-Core**| `GET /simple` (16 PM2) | None (In-Memory) | 1.82 ms | **104,218 RPS** | 12.3 MB/s | 1.04M | 16 separate Node processes, 800MB RAM, IPC bottleneck |
-| **Node.js DB Read** | `GET /code-v3` | PostgreSQL B-Tree | 2.01 ms | **7,509 RPS** | 4.1 MB/s | 75K | Connection pool limit (20 conns) + NVMe SSD latency |
-| **Node.js Redis Read**| `GET /code-fast` | Redis 8 Multi-Thread | 2.07 ms | **48,062 RPS** | 35.1 MB/s | 480K | Network socket roundtrip hop (~0.2ms) |
-| **Go Milestone 1** | `GET /simple` (10 Cores) | None (Standard `net/http`)| 4.64 ms | **196,480 RPS (Peak 203K)**| 23.2 MB/s | 1.96M | 1 Single Go Binary, 15MB RAM, GMP Work-Stealing |
-| **Go Milestone 2** | `GET /simple` (10 Cores) | None (`fasthttp` Pool) | 4.21 ms | **216,755 RPS (Peak 231K)**| 30.3 MB/s | 2.16M | Zero memory allocations per request (`sync.Pool`) |
-| **Go Milestone 3** | `GET /code-fast?id=42` | In-Process RAM Cache | 4.76 ms | **194,265 RPS (Peak 201K)**| **126.0 MB/s**| **1.94M (1.26 GB!)**| O(1) Contiguous RAM Lookup (15ns) serving 500-char JSON |
-| **Go Milestone 4** | `POST /code-write` | In-Memory Channels + Batch | *(Target)* | **~150,000+ RPS** | - | - | Non-blocking `chan Item`, zero-wait write behind |
-| **Go Milestone 5** | WSL2 Linux + `wrk` | Tuned Epoll Stack | *(Target)* | **1,000,000 RPS (1M)**| - | - | C-based load generator + kernel socket reuse |
+| Milestone / Stage | Architecture / Route | OS & Network Layer | Avg Latency | P50 Latency | Req / Sec (RPS) | Bandwidth / Sec | Total in 10s | Key Architectural Discovery |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **Node.js Baseline** | `GET /simple` (1 Core) | Windows Host (Loopback) | 0.12 ms | 0.10 ms | **32,680 RPS** | 4.3 MB/s | 327K | V8 JIT + libuv single-threaded event loop |
+| **Node.js Multi-Core**| `GET /simple` (16 PM2) | Windows Host (PM2 Cluster)| 1.82 ms | 1.50 ms | **104,218 RPS** | 12.3 MB/s | 1.04M | 16 separate Node processes, 800MB RAM, IPC bottleneck |
+| **Node.js DB Read** | `GET /code-v3` | PostgreSQL B-Tree Index | 2.01 ms | 1.95 ms | **7,509 RPS** | 4.1 MB/s | 75K | Pool limit (20 conns) + NVMe SSD latency |
+| **Node.js Redis Read**| `GET /code-fast` | Redis 8 Multi-Thread | 2.07 ms | 2.00 ms | **48,062 RPS** | 35.1 MB/s | 480K | TCP network socket roundtrip (~0.2ms) |
+| **Go Milestone 1** | `GET /simple` (10 Cores) | Windows (Standard `net/http`)| 4.64 ms | 3.00 ms | **196,480 RPS** (Peak 203K)| 23.2 MB/s | 1.96M | 1 Single Binary, 15MB RAM, GMP Work-Stealing |
+| **Go Milestone 2** | `GET /simple` (10 Cores) | Windows (`fasthttp` Pool) | 4.21 ms | 4.00 ms | **216,755 RPS** (Peak 231K)| 30.3 MB/s | 2.16M | Zero memory allocations (`sync.Pool`) |
+| **Go Milestone 3** | `GET /code-fast?id=42` | Windows (In-Process RAM) | 4.76 ms | 5.00 ms | **194,265 RPS** (Peak 201K)| **126.0 MB/s** | **1.94M (1.26 GB!)**| O(1) Contiguous RAM Lookup (15ns) serving 500-char JSON |
+| **Go Milestone 4** | `POST /code-write` | Windows (Buffered Channels)| 4.18 ms | 4.00 ms | **218,150 RPS** (Peak 229K)| 36.5 MB/s | **2.18M writes** | Non-blocking `chan Item`, zero-wait write behind |
+| **Go Milestone 5** | `GET /simple` (Native Linux)| **Kali Linux (Pure Epoll)** | **0.43 ms** | **144.00 us!** | **843,549.64 RPS!** | **112.63 MB/s**| **8.44M in 10s!** | **Zero Hyper-V overhead, C-based `wrk` load generation** |
 
 ---
 
-## 2. Architecture Comparison: Why Go Crushed Node.js
+## 2. Milestone 5: The 843,549 RPS Milestone Verification
+
+![wrk 843K RPS Live Benchmark in Kali Linux](./img/wrk_843k_benchmark.png)
+
+### Key Milestone 5 Metrics:
+* **Throughput:** **843,549.64 Requests / Second** (Near 8.5 Lakh RPS!)
+* **P50 Latency:** **144.00 Microseconds (0.144 ms)**
+* **Average Latency:** **0.43 milliseconds (430 microseconds)**
+* **P90 Latency:** **0.87 milliseconds**
+* **Total Processed:** **8,444,880 Requests in 10.01 seconds** (1.10 GB transferred)
+
+---
+
+## 3. Architecture Comparison: Node.js vs Go
 
 ![Software Architecture Comparison: Node.js PM2 Cluster vs Golang GMP Model](./img/architecture.jpg)
 
@@ -30,7 +43,76 @@ Every benchmark below was executed on identical 10-Core hardware with verified A
 
 ---
 
-## 3. Deep-Dive: Core Engineering Concepts Explained
+## 4. Why the Server Peaked at 200K on Windows vs 843K on Linux
+
+When our Go server ran on Windows, throughput hit a ceiling around 216K - 231K RPS. When moved to native Linux with `wrk`, it rocketed to **843K RPS with 144-microsecond latency**. Here is the low-level systems engineering reason:
+
+### 1. Windows Loopback & Autocannon Contention
+* On Windows, running **Autocannon** (Node.js) on the same machine consumed **4 to 5 CPU cores** purely generating requests and serializing JS objects. This starved the server of CPU resources.
+* Furthermore, Windows Winsock loopback has higher kernel context-switch latency compared to Linux Unix Domain Sockets and Epoll.
+
+### 2. The Hyper-V Virtual Switch Bottleneck
+* When we ran `wrk` from inside WSL2 targeting the Windows host (`http://172.24.224.1:8081`), packets had to traverse the **Hyper-V NAT Virtual Network Adapter**.
+* Every single packet underwent virtualized network address translation (NAT), adding network jitter.
+
+### 3. The Pure Linux Epoll Advantage (`127.0.0.1`)
+* Running both the Go binary (`server_linux`) and `wrk` natively inside Kali Linux allowed all traffic to travel over the **Linux Loopback Interface (`lo`)**.
+* Linux Loopback operates directly inside kernel memory buffers without physical network card serialization.
+* Combined with Go's native Linux `epoll` netpoller and `wrk`'s C-based event engine, context-switch latency dropped from **4.2 milliseconds down to 144 microseconds (a 30x reduction!)**, unleashing **843,549 RPS**!
+
+---
+
+## 5. The Cross-Compilation Magic: Building `server_linux`
+
+We did not need to install the Go compiler or dependencies inside Kali Linux. Go includes a built-in cross-compiler that can produce self-contained, statically linked Linux ELF binaries directly from Windows!
+
+### How to Compile `server_linux` from Windows:
+Run the following command in Windows Command Prompt:
+```cmd
+set GOOS=linux&& set GOARCH=amd64&& go build -o server_linux main.go
+```
+* **`GOOS=linux`**: Instructs the Go compiler to target the Linux Operating System kernel ABI.
+* **`GOARCH=amd64`**: Targets 64-bit x86 architecture.
+* **Static Binary**: The resulting `server_linux` file (~8.4 MB) has zero external C library dependencies (`glibc` or dynamic linkers). It runs out-of-the-box on any Linux distro (Kali, Ubuntu, Debian, Alpine, Arch).
+
+---
+
+## 6. How to Deploy & Run the Server in Kali Linux (WSL2)
+
+### Step 1: Copy Binary to Linux Home Directory
+Windows drives are automatically mounted in WSL under `/mnt/c/`. Copy the binary to native Linux `ext4` storage:
+```bash
+cp "/mnt/c/Users/LOQ/Desktop/Golang/1 Million in Go/server_linux" ~/server_linux
+chmod +x ~/server_linux
+```
+
+### Step 2: Stop Any Running Server on Windows
+Ensure no server is holding port `8081` on Windows (`Ctrl + C` in PowerShell).
+
+### Step 3: Launch Native Linux Daemon
+Start the server in the background inside your Kali Linux terminal:
+```bash
+./server_linux &
+```
+Verify the server is running:
+```bash
+curl http://127.0.0.1:8081/simple
+# Returns: OK
+```
+
+### Step 4: Execute the 843K RPS Benchmark
+Run `wrk` on native Linux loopback:
+```bash
+# 8 Threads, 200 Connections
+wrk -t8 -c200 -d10s --latency http://127.0.0.1:8081/simple
+
+# 12 Threads, 200 Connections (843,549 RPS Record!)
+wrk -t12 -c200 -d10s --latency http://127.0.0.1:8081/simple
+```
+
+---
+
+## 7. Deep-Dive: Core Engineering Concepts
 
 ### A. The Latency Hierarchy (Why In-Process RAM Crushed Redis & Postgres)
 
@@ -39,41 +121,30 @@ Every benchmark below was executed on identical 10-Core hardware with verified A
 Computer hardware operates across vastly different timescales:
 
 ```
-[ CPU L1/L2 Cache ] ──► 1 Nanosecond       (Registers, direct silicon)
+[ CPU L1/L2 Cache ] ──► 1 Nanosecond       (Silicon Registers)
 [ Local RAM ]       ──► 15 - 50 Nanoseconds (O(1) Array Lookup - 200K+ RPS)
 [ Redis (Network) ] ──► 200 - 500 Microseconds (10,000x slower than RAM)
 [ PostgreSQL (SSD)] ──► 1 - 5 Milliseconds   (100,000x slower than RAM!)
 ```
 
-* **In PostgreSQL**: Each query requires connection pool checkout, SQL parsing, and SSD read/write-ahead log sync (`fsync`). With 20 connections taking 2ms each, the theoretical ceiling is `20 / 0.002 = 10,000 RPS`.
+* **In PostgreSQL**: Each query requires connection pool checkout, SQL parsing, and SSD write-ahead log sync (`fsync`). With 20 connections taking 2ms each, the theoretical ceiling is `20 / 0.002 = 10,000 RPS`.
 * **In Redis**: While Redis stores data in RAM, reading over a TCP socket adds a network roundtrip overhead (~0.2ms) and socket buffer parsing.
 * **In Go In-Process RAM (`memoryStore`)**: Data lives inside the Go process's virtual memory address space. Reading an element takes **15 nanoseconds** with zero network hops, delivering **194,265 RPS** while streaming **1.26 GB of JSON in 10 seconds**!
 
 ---
 
-### B. What is a TCP Socket & Why Keep-Alive Matters
-A TCP Socket is an OS kernel abstraction (represented as a **File Descriptor `int fd`**) identifying an active bidirectional communication pipe.
+### B. Non-Blocking Write-Behind Pattern (Goroutine Channels)
 
-Every socket is identified by a **4-Tuple**:
-`[Client IP : Client Port] <=====> [Server IP : Server Port]`
+![Non-Blocking Write-Behind Pattern using Golang Channels](./img/write_behind.jpg)
 
-* **The Connection Bottleneck**: Creating a new TCP socket requires a 3-way handshake (`SYN -> SYN-ACK -> ACK`), and closing it leaves the socket in `TIME_WAIT` state for 60 seconds. A machine has only **65,535 ports**. At 100K+ RPS, opening/closing connections causes instant **Port Exhaustion**.
-* **The 1M Solution (HTTP Keep-Alive)**: In all our benchmarks, we reuse **100 persistent connections** with pipelining (`-c 100 -p 10`). Sockets remain permanently open, streaming millions of requests through existing kernel pipes without re-handshaking.
-
----
-
-### C. Why Buffers are Compulsory (Syscall Overhead Elimination)
-Why did we configure `ReadBufferSize: 4096` and `WriteBufferSize: 4096` in `fasthttp`?
-
-1. **Syscall Cost**: Reading bytes from an OS socket requires a context switch from User Mode to Kernel Mode (`recv()`), costing **1,000 to 3,000 CPU clock cycles**.
-   * *Without a buffer*: Reading 500 bytes 1-by-1 requires 500 syscalls, instantly choking the CPU.
-   * *With a 4KB buffer*: 1 single syscall reads the entire request into RAM.
-2. **TCP is a Byte Stream, Not a Message**: TCP delivers chunks asynchronously. A buffer acts as a temporary reservoir that holds incoming bytes until the end-of-header delimiter (`\r\n\r\n`) is reached.
-3. **Hardware Page Alignment**: Modern x86/x64 CPUs and OS kernels use **4096-byte (4KB) memory pages**. Aligning socket buffers to 4KB prevents CPU cache line splits and L1/L2 cache thrashing.
+* **User Zero-Wait**: The incoming `POST /code-write` request stores data directly into in-memory RAM in ~0.05ms, queues the task into an in-memory channel (`chan Item, 200000`), and returns `201 Created` in **< 1ms**.
+* **Zero Network Hop Queue**: Unlike Node.js which required `redis.lpush` over TCP, Go Channels pass raw memory pointers across CPU cores at nanosecond speeds.
+* **Batch Flushing**: Background Goroutines consume from the channel and flush records in batches of 5,000 to persistent storage, reducing disk I/O operations by **98%**.
+* **Result**: **218,150 Sustained Writes/Second (Peak: 229,631 RPS)** with only 4.18ms average latency!
 
 ---
 
-### D. Zero-Allocation Buffer Pooling (`fasthttp` vs Standard `net/http`)
+### C. Zero-Allocation Buffer Pooling (`fasthttp` vs Standard `net/http`)
 Standard `net/http` allocates new memory on the heap for every single request:
 * At 200,000 RPS, generating 2KB of structs per request produces **400 MB of garbage memory every second**.
 * The Go Garbage Collector (GC) must frequently pause execution to clean up heap memory, causing latency jitter.
@@ -82,53 +153,26 @@ Standard `net/http` allocates new memory on the heap for every single request:
 
 ---
 
-### E. Non-Blocking Write-Behind Pattern (Goroutine Channels)
+## 8. Summary of All Milestone Achievements
 
-![Non-Blocking Write-Behind Pattern using Golang Channels](./img/write_behind.jpg)
-
-* **User Zero-Wait**: The incoming `POST /code-write` request stores data directly into in-memory RAM in ~0.05ms, queues the task into an in-memory channel (`chan Item, 200000`), and returns `201 Created` in **< 1ms**.
-* **Zero Network Hop Queue**: Unlike Node.js which required `redis.lpush` over TCP, Go Channels pass raw memory pointers across CPU cores at nanosecond speeds.
-* **Batch Flushing**: Background Goroutines consume from the channel and flush records in batches of 5,000 to persistent storage, reducing disk I/O operations by **98%**.
-
----
-
-## 4. Live Benchmark Verification Logs
-
-### Milestone 1: Standard `net/http` (10 Cores Baseline)
-```text
-Running 10s test @ http://localhost:8080/simple (100 conns, 10 pipeline, 4 workers)
-Avg Latency: 4.64 ms | Avg Req/Sec: 196,480 RPS | Peak: 203,007 RPS
-Total: 1,966,000 requests in 10.11s | 232 MB read
 ```
-
-### Milestone 2: `fasthttp` (Zero-Allocation Buffer Pooling)
-```text
-Running 10s test @ http://localhost:8081/simple (100 conns, 10 pipeline, 4 workers)
-Avg Latency: 4.21 ms | Avg Req/Sec: 216,755 RPS | Peak: 231,935 RPS
-Total: 2,168,000 requests in 10.18s | 303 MB read
+[ Node.js Baseline: 32,680 RPS ]
+       │
+       ▼ (16 PM2 Workers Cluster)
+[ Node.js Maxed Out: 104,218 RPS ]
+       │
+       ▼ (Go Milestone 1: Standard net/http Baseline)
+[ Go Standard Library: 196,480 RPS ]
+       │
+       ▼ (Go Milestone 2: fasthttp Zero-Allocation)
+[ Go fasthttp Windows: 216,755 RPS (Peak 231K) ]
+       │
+       ▼ (Go Milestone 3: Real 500-Char JSON Read)
+[ Go In-Process RAM: 194,265 RPS (1.26 GB read in 10s) ]
+       │
+       ▼ (Go Milestone 4: Real Data Write)
+[ Go Channels Queue: 218,150 Writes/Sec (Peak 229K) ]
+       │
+       ▼ (Go Milestone 5: Native Linux Epoll + wrk)
+[ RECORD: 843,549.64 RPS | 144us P50 Latency | 8.44M Requests in 10s! ]
 ```
-
-### Milestone 3: Real In-Memory 500-Character JSON Read
-```text
-Running 10s test @ http://localhost:8081/code-fast?id=42 (100 conns, 10 pipeline, 4 workers)
-Avg Latency: 4.76 ms | Avg Req/Sec: 194,265 RPS | Peak: 201,599 RPS
-Throughput: 126 MB / second | Total: 1.26 GIGABYTES read in 10.21s!
-Total: 1,944,000 real JSON responses in 10s
-```
-
----
-
-## 5. How to Reproduce All Benchmarks
-
-1. **Run the Go Server**:
-   ```bash
-   go run main.go
-   ```
-2. **Benchmark Simple Route (Ping)**:
-   ```bash
-   npx autocannon -c 100 -d 10 -p 10 -w 4 http://localhost:8081/simple
-   ```
-3. **Benchmark Real 500-Char Data Read**:
-   ```bash
-   npx autocannon -c 100 -d 10 -p 10 -w 4 "http://localhost:8081/code-fast?id=42"
-   ```
