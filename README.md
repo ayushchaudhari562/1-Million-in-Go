@@ -80,35 +80,27 @@ set GOOS=linux&& set GOARCH=amd64&& go build -o server_linux main.go
 
 ## 6. How to Deploy & Run the Server in Kali Linux (WSL2)
 
-### Step 1: Copy Binary to Linux Home Directory
-Windows drives are automatically mounted in WSL under `/mnt/c/`. Copy the binary to native Linux `ext4` storage:
-```bash
-cp "/mnt/c/Users/LOQ/Desktop/Golang/1 Million in Go/server_linux" ~/server_linux
-chmod +x ~/server_linux
+### Step 1: Compile Linux Binary from Windows PowerShell
+Run this command in PowerShell to cross-compile the high-performance Linux binary:
+```powershell
+$env:GOOS="linux"; $env:GOARCH="amd64"; go build -o server_linux main.go
 ```
 
-### Step 2: Stop Any Running Server on Windows
-Ensure no server is holding port `8081` on Windows (`Ctrl + C` in PowerShell).
+### Step 2: Ensure Port 8081 is Free
+Make sure no server is holding port `8081` on Windows (`Ctrl + C` in any running terminal).
 
-### Step 3: Launch Native Linux Daemon
-Start the server in the background inside your Kali Linux terminal:
+### Step 3: Run the Official 1 Million RPS Benchmark in Kali Linux (WSL2)
+Copy and paste this single command into your **Kali Linux** terminal. It copies the binary, tunes socket descriptors (`ulimit -n 65535`), launches the multi-core `SO_REUSEPORT` daemon, executes `wrk` with 9 threads & 250 connections, and cleans up:
+
 ```bash
-./server_linux &
-```
-Verify the server is running:
-```bash
-curl http://127.0.0.1:8081/simple
-# Returns: OK
+ulimit -n 65535; cp /mnt/c/Users/LOQ/Desktop/Golang/1\ Million\ in\ Go/server_linux ~/server_linux && chmod +x ~/server_linux && GOGC=off ~/server_linux & sleep 1; wrk -t9 -c250 -d10s --latency http://127.0.0.1:8081/simple; pkill -9 -f server_linux
 ```
 
-### Step 4: Execute the 843K RPS Benchmark
-Run `wrk` on native Linux loopback:
-```bash
-# 8 Threads, 200 Connections
-wrk -t8 -c200 -d10s --latency http://127.0.0.1:8081/simple
+### Step 4: Benchmark Real 500-Character JSON Read (`/code-fast`)
+To benchmark zero-allocation real JSON responses reading contiguous RAM at scale:
 
-# 12 Threads, 200 Connections (843,549 RPS Record!)
-wrk -t12 -c200 -d10s --latency http://127.0.0.1:8081/simple
+```bash
+ulimit -n 65535; cp /mnt/c/Users/LOQ/Desktop/Golang/1\ Million\ in\ Go/server_linux ~/server_linux && chmod +x ~/server_linux && GOGC=off ~/server_linux & sleep 1; wrk -t9 -c250 -d10s --latency "http://127.0.0.1:8081/code-fast?id=42"; pkill -9 -f server_linux
 ```
 
 ---
