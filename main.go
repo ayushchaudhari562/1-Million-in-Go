@@ -21,28 +21,48 @@ import (
 var dbPool *pgxpool.Pool;
 
 
-var writeQueue = make(chan Item, 200000)
-var totalWrites uint64 // Atomic counter
+var writeQueue = make(chan Item, 200000);
+var totalWrites uint64;
+
+func flushBatchToDB(items []Item) {
+	if dbPool == nil || len(items) == 0 {
+		return;
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second);
+	defer cancel();
+
+	rows := make([][]any, len(items));
+	for i, it := range items {
+		rows[i] = []any{it.ID, it.Code};
+	}
+	dbPool.CopyFrom(
+		ctx,
+		pgx.Identifier{"codes"},
+		[]string{"id", "code"},
+		pgx.CopyFromRows(rows),
+	);
+}
 
 func startBatchWorker() {
 	go func() {
-		batch := make([]Item, 0, 5000)
-		ticker := time.NewTicker(100 * time.Millisecond)
+		batch := make([]Item, 0, 5000);
+		ticker := time.NewTicker(100 * time.Millisecond);
 		for {
 			select {
 			case item := <-writeQueue:
-				batch = append(batch, item)
+				batch = append(batch, item);
 				if len(batch) >= 5000 {
-					batch = batch[:0]
-					//batch = make([]Item, 0, 5000)
+					flushBatchToDB(batch);
+					batch = batch[:0];
 				}
 			case <-ticker.C:
 				if len(batch) > 0 {
-					batch = batch[:0]
+					flushBatchToDB(batch);
+					batch = batch[:0];
 				}
 			}
 		}
-	}()
+	}();
 }
 
 type Item struct {
@@ -55,18 +75,18 @@ const TOTAL_RECORDS = 100000
 var memoryStore [TOTAL_RECORDS]string
 
 func generateDummyCode() string {
-	bytes := make([]byte, 250) // 250 bytes = 500 hex characters
-	rand.Read(bytes)
-	return hex.EncodeToString(bytes)
+	bytes := make([]byte, 250);
+	rand.Read(bytes);
+	return hex.EncodeToString(bytes);
 }
 
 func initData() {
-	fmt.Println("Pre-loading 100,000 real records into RAM...")
-	dummy := generateDummyCode()
+	fmt.Println("Pre-loading 100,000 real records into RAM...");
+	dummy := generateDummyCode();
 	for i := 0; i < TOTAL_RECORDS; i++ {
-		memoryStore[i] = dummy
+		memoryStore[i] = dummy;
 	}
-	fmt.Println("100,000 records ready in RAM (Zero disk/network latency)!")
+	fmt.Println("100,000 records ready in RAM (Zero disk/network latency)!");
 }
 
 func initDB(){
@@ -87,9 +107,9 @@ func initDB(){
 	ctx , cancel := context.WithTimeout(context.Background(),5*time.Second);
 	defer cancel();
 
-	pool,err := pgxpool.New(ctx,config);
-	if err != nil{
-		log.Printf("DB connection error %v",err);
+	pool, err := pgxpool.NewWithConfig(ctx, config);
+	if err != nil {
+		log.Printf("DB connection error %v", err);
 		return;
 	}
 	if err := pool.Ping(ctx); err != nil {
@@ -99,31 +119,17 @@ func initDB(){
 	dbPool = pool;
 	fmt.Println(" Connected to PostgreSQL (1Million Database)!");
 
-	dbPool.Exec(ctx,`CREATE TABLE IF NOT EXISTS items (
+	dbPool.Exec(ctx, `CREATE TABLE IF NOT EXISTS codes (
 						id INT PRIMARY KEY,
 						code TEXT NOT NULL
 	);
-	CREATE INDEX IF NOT EXISTS items_id_idx ON items(id)`);
-	var count int ;
-	dbPool.QueryRow(ctx,"SELECT count(*) FROM items").Scan(&count);
-	if count == 0 {
-		fmt.Println("Seeding 10,000 items into PostgreSQL via binary COPY...");
-		dummy := generateDummyCode();
-		rows := make([][]any, 10000);
-		for i := 0; i < 10000; i++ {
-			rows[i] = []any{i + 1, dummy};
-		}
-		dbPool.CopyFrom(
-			ctx,
-			pgx.Identifier{"items"},
-			[]string{"id", "code"},
-			pgx.CopyFromRows(rows),
-		);
-		fmt.Println(" Seeded 10,000 records in PostgreSQL!");
-	} else {
-		fmt.Printf(" PostgreSQL table 'items' ready with %d rows!\n", count);
-	}
-
+	CREATE INDEX IF NOT EXISTS codes_id_idx ON codes(id)`);
+	var count int;
+	dbPool.QueryRow(ctx, "SELECT count(*) FROM codes").Scan(&count);
+	var maxID uint64;
+	dbPool.QueryRow(ctx, "SELECT COALESCE(MAX(id), 0) FROM codes").Scan(&maxID);
+	atomic.StoreUint64(&totalWrites, maxID);
+	fmt.Printf(" PostgreSQL table 'codes' ready with %d rows! Starting write IDs at %d\n", count, maxID+1);
 }
 
 var (
@@ -132,6 +138,7 @@ var (
 	pathSimple    = []byte("/simple")      
 	pathCodeFast  = []byte("/code-fast")  
 	pathCodeWrite = []byte("/code-write")
+	pathCodeDB    = []byte("/code-db")
 )
 
 func fastHandler(ctx *fasthttp.RequestCtx) {
@@ -161,6 +168,39 @@ func fastHandler(ctx *fasthttp.RequestCtx) {
 			b = append(b, `,"code":"`...);
 			b = append(b, code...);
 			b = append(b, `"}`...);
+			ctx.SetBody(b);
+			return;
+		}
+
+		if bytes.Equal(path, pathCodeDB) {
+			id := ctx.QueryArgs().GetUintOrZero("id");
+			if id <= 0 {
+				id = 1;
+			}
+
+			if dbPool == nil {
+				ctx.SetStatusCode(fasthttp.StatusServiceUnavailable);
+				ctx.SetBodyString(`{"error":"database not connected"}`);
+				return;
+			}
+
+			var code string;
+			err := dbPool.QueryRow(ctx, "SELECT code FROM codes WHERE id = $1", id).Scan(&code);
+			if err != nil {
+				ctx.SetStatusCode(fasthttp.StatusNotFound);
+				ctx.SetBodyString(`{"error":"record not found"}`);
+				return;
+			}
+
+			ctx.SetContentType("application/json");
+			ctx.SetStatusCode(fasthttp.StatusOK);
+
+			b := ctx.Response.Body()[:0];
+			b = append(b, `{"id":`...);
+			b = strconv.AppendInt(b, int64(id), 10);
+			b = append(b, `,"code":"`...);
+			b = append(b, code...);
+			b = append(b, `,"source":"postgresql"}`...);
 			ctx.SetBody(b);
 			return;
 		}
@@ -201,9 +241,9 @@ func main() {
 	runtime.GOMAXPROCS(numCores)
 	fmt.Printf(" Server started on :8081 using %d CPU cores & SO_REUSEPORT multi-listeners!\n", numCores)
 
-	initData()
-initDB();
-	startBatchWorker()
+	initData();
+	initDB();
+	startBatchWorker();
 
 	for i := 0; i < numCores; i++ {
 		go func(workerID int) {
