@@ -1,6 +1,6 @@
 # 1 Million RPS in Go: Architecture, Benchmarks & Deep Internals
 
-A comprehensive technical study and benchmark progression comparing **Node.js** vs **Go (Golang)** on identical 10-Core (16-Thread) hardware, scaling from baseline to **1,006,176 Requests/Second (1 Million+ RPS)**.
+A comprehensive technical study and benchmark progression comparing **Node.js** vs **Go (Golang)** on identical 10-Core (16-Thread) hardware, scaling from baseline to **1,017,103 Requests/Second (1 Million+ RPS)**.
 
 ---
 
@@ -19,7 +19,7 @@ Every benchmark below was recorded live on identical hardware:
 | **Go Milestone 3** | `GET /code-fast?id=42` | Windows (In-Process RAM) | 4.76 ms | 5.00 ms | **194,265 RPS** (Peak 201K)| **126.0 MB/s** | **1.94M (1.26 GB!)**| O(1) Contiguous RAM Lookup (15ns) serving 500-char JSON |
 | **Go Milestone 4** | `POST /code-write` | Windows (Buffered Channels)| 4.18 ms | 4.00 ms | **218,150 RPS** (Peak 229K)| 36.5 MB/s | **2.18M writes** | Non-blocking `chan Item`, zero-wait write behind |
 | **Go Milestone 5** | `GET /simple` (Native Linux)| Kali Linux (Pure Epoll) | 0.43 ms | 144.00 us! | **843,549.64 RPS** | 112.63 MB/s| 8.44M in 10s | Zero Hyper-V overhead, C-based `wrk` load generation |
-| **Go Milestone 6** | `GET /simple` (Multi-Socket) | **Kali Linux (SO_REUSEPORT)** | **0.41 ms** | **150.00 us!** | **1,006,176.34 RPS!** | **111.13 MB/s**| **10.02M in 10s!** | **Multi-Core `SO_REUSEPORT` kernel load balancing + Zero-allocation byte pipeline** |
+| **Go Milestone 6** | `GET /simple` (10 Threads) | **Kali Linux (SO_REUSEPORT)** | **0.39 ms** | **121.00 us!** | **1,017,103.27 RPS!** | **113.49 MB/s**| **10.18M in 10s!** | **Multi-Core `SO_REUSEPORT` on 10 Threads + Zero-allocation byte pipeline** |
 
 ---
 
@@ -194,6 +194,6 @@ To breach **1,000,000 Requests/Second**, the following low-level systems optimiz
        ▼ (Go Milestone 5: Native Linux Epoll + wrk)
 [ Go Epoll Baseline: 843,549 RPS ]
        │
-       ▼ (Go Milestone 6: SO_REUSEPORT + Zero-Allocation Pipeline)
-[ RECORD: 1,006,176.34 RPS | 150us P50 Latency | 10.02M Requests in 10s! ]
+       ▼ (Go Milestone 6: SO_REUSEPORT + Zero-Allocation Pipeline on 10 Threads)
+[ RECORD: 1,017,103.27 RPS | 121us P50 Latency | 10.18M Requests in 10s! ]
 ```
