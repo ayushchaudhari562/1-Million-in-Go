@@ -69,7 +69,62 @@ func initData() {
 	fmt.Println("100,000 records ready in RAM (Zero disk/network latency)!")
 }
 
+func initDB(){
+	dbURL := os.Getenv("DATABASE_URL");
+	if dbURL == ""{
+		dbURL = "postgresql://postgres:ayush9569518989@localhost:5432/1Million";
+		
+	}
+	config , err := pgxpool.ParseConfig(dbURL);
+	if err != nil {
+		log.Printf("DB Config error: %v", err);
+		return;
+	}
+	config.MaxConns = 100;
+	config.MinConns = 10;
+	config.MaxConnIdleTime = 5 * time.Minute;
 
+	ctx , cancel := context.WithTimeout(context.Background(),5*time.Second);
+	defer cancel();
+
+	pool,err := pgxpool.New(ctx,config);
+	if err != nil{
+		log.Printf("DB connection error %v",err);
+		return;
+	}
+	if err := pool.Ping(ctx); err != nil {
+		log.Printf("DB Ping error: %v", err);
+		return;
+	}
+	dbPool = pool;
+	fmt.Println(" Connected to PostgreSQL (1Million Database)!");
+
+	dbPool.Exec(ctx,`CREATE TABLE IF NOT EXISTS items (
+						id INT PRIMARY KEY,
+						code TEXT NOT NULL
+	);
+	CREATE INDEX IF NOT EXISTS items_id_idx ON items(id)`);
+	var count int ;
+	dbPool.QueryRow(ctx,"SELECT count(*) FROM items").Scan(&count);
+	if count == 0 {
+		fmt.Println("Seeding 10,000 items into PostgreSQL via binary COPY...");
+		dummy := generateDummyCode();
+		rows := make([][]any, 10000);
+		for i := 0; i < 10000; i++ {
+			rows[i] = []any{i + 1, dummy};
+		}
+		dbPool.CopyFrom(
+			ctx,
+			pgx.Identifier{"items"},
+			[]string{"id", "code"},
+			pgx.CopyFromRows(rows),
+		);
+		fmt.Println(" Seeded 10,000 records in PostgreSQL!");
+	} else {
+		fmt.Printf(" PostgreSQL table 'items' ready with %d rows!\n", count);
+	}
+
+}
 
 var (
 	okBytes   = []byte("OK")
@@ -147,7 +202,7 @@ func main() {
 	fmt.Printf(" Server started on :8081 using %d CPU cores & SO_REUSEPORT multi-listeners!\n", numCores)
 
 	initData()
-
+initDB();
 	startBatchWorker()
 
 	for i := 0; i < numCores; i++ {
