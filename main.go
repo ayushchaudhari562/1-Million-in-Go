@@ -1,17 +1,25 @@
 package main
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
 	"log"
+	"os"
 	"runtime"
 	"strconv"
 	"sync/atomic"
 	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/valyala/fasthttp"
 	"github.com/valyala/fasthttp/reuseport"
 )
+
+var dbPool *pgxpool.Pool;
+
 
 var writeQueue = make(chan Item, 200000)
 var totalWrites uint64 // Atomic counter
@@ -60,6 +68,8 @@ func initData() {
 	}
 	fmt.Println("100,000 records ready in RAM (Zero disk/network latency)!")
 }
+
+
 
 var (
 	okBytes   = []byte("OK")

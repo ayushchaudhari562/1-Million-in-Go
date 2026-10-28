@@ -23,7 +23,61 @@ Every benchmark below was recorded live on identical hardware:
 
 ---
 
-## 2. Milestone 5: The 843,549 RPS Milestone Verification
+## 2. Milestone 6: The 1,017,103 RPS Milestone Verification (10-Thread Record)
+
+Live terminal verification recorded in Kali Linux (WSL2):
+
+```text
+(ayushSJ@ayush562)-[~]
+$ wrk -t10 -c200 -d10s --latency http://127.0.0.1:8081/simple
+Running 10s test @ http://127.0.0.1:8081/simple
+  10 threads and 200 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency   389.70us    0.90ms  26.71ms   93.53%
+    Req/Sec   102.30k    13.08k  150.74k    75.40%
+  Latency Distribution
+     50%  121.00us
+     75%  319.00us
+     90%  796.00us
+     99%    4.63ms
+  10,185,622 requests in 10.01s, 1.11GB read
+Requests/sec: 1,017,103.27
+Transfer/sec:    113.49MB
+```
+
+### Key Milestone 6 Metrics:
+* **Throughput:** **1,017,103.27 Requests / Second** (Over 10.17 Lakh RPS!)
+* **P50 Latency:** **121.00 Microseconds (0.121 ms)**
+* **Average Latency:** **389.70 Microseconds (0.389 ms)**
+* **P90 Latency:** **796.00 Microseconds**
+* **Peak Thread RPS:** **150,740 Requests / Second on a single thread**
+* **Total Processed:** **10,185,622 Requests in 10.01 seconds** (1.11 GB transferred)
+
+---
+
+### Previous Milestone Comparison (12 Threads vs 10 Threads):
+
+```text
+(ayushSJ@ayush562)-[~]
+$ wrk -t12 -c200 -d10s --latency http://127.0.0.1:8081/simple
+Running 10s test @ http://127.0.0.1:8081/simple
+  12 threads and 200 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency   392.63us    0.91ms  21.36ms   93.91%
+    Req/Sec    79.90k    10.59k  110.79k    73.38%
+  Latency Distribution
+     50%  119.00us
+     75%  346.00us
+     90%  796.00us
+     99%    4.65ms
+  9,563,024 requests in 10.10s, 1.04GB read
+Requests/sec: 946,610.53
+Transfer/sec:    105.62MB
+```
+
+---
+
+## 3. Milestone 5: The 843,549 RPS Milestone Verification
 
 ![wrk 843K RPS Live Benchmark in Kali Linux](./img/wrk_843k_benchmark.png)
 
