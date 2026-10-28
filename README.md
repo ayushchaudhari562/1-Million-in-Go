@@ -183,7 +183,9 @@ To breach **1,000,000 Requests/Second**, the following low-level systems optimiz
 
 #### 1. Multi-Core `SO_REUSEPORT` Architecture
 * **The Problem:** Standard servers run a single `net.Listener` on port 8081. When 16 CPU cores handle requests simultaneously, the Linux kernel enforces a single spinlock on `accept()`, causing core idling.
-* **The Optimization:** Using `github.com/valyala/fasthttp/reuseport`, we open **16 independent socket file descriptors** bound to port 8081. The Linux kernel TCP/IP stack hashes incoming connections directly to individual core queues, eliminating lock contention.
+* **The Optimization:** Using `github.com/valyala/fasthttp/reuseport`, we open **independent socket file descriptors** bound to port 8081. The Linux kernel TCP/IP stack hashes incoming connections directly to individual core queues, eliminating lock contention.
+
+![Linux Kernel Load Balancing (SO_REUSEPORT) vs External Load Balancer](./img/kernel_load_balancer_white.png)
 
 #### 2. Zero-Allocation Binary Path Routing (`bytes.Equal`)
 * **The Problem:** Writing `switch string(ctx.Path())` forces Go to allocate a new immutable heap string from socket buffer bytes on every request (10 million allocations in 10s!).
@@ -210,34 +212,18 @@ In classical databases, reads are usually faster than writes because reads avoid
 
 Here is the architectural reason visualized:
 
+![Database Paradox: Synchronous Read vs Asynchronous Write-Behind Queue](./img/db_read_write_white.png)
+
 #### 1. Synchronous Read (The User Waits for the SSD)
-```
-[ Client ] ──(Request)──► [ Go Server ] ──(Query)──► [ PostgreSQL ] ──► [ NVMe SSD ]
-    ▲                                                                         │
-    └──────────────────(Waits ~9-17ms for Disk Seek)──────────────────────────┘
-    Max Throughput Ceiling: 100 conns / 0.002s = ~50,000 to 56,263 RPS
-```
 * The client **requires the actual data** to render the UI.
-* The connection must stay open across the entire network roundtrip and B-Tree index lookup.
+* The connection must stay open across the entire network roundtrip and B-Tree index lookup on disk (~9-17ms P50 latency).
+* Max Throughput Ceiling: `100 conns / 0.002s = ~50,000 to 56,263 RPS`.
 
 #### 2. Asynchronous Write-Behind (Zero-Wait User Queue)
-```
-[ Client ] ──(POST /code-write)──► [ Go Server ]
-    ▲                                     │
-    └──(Immediate 201 Created: < 1ms!)────┤ (RAM Channel: 0.0001ms)
-                                          ▼
-                                 [ chan Item (200K) ]
-                                          │
-                                          ▼ (5,000 Item Batch)
-                                  [ pgx.CopyFrom ]
-                                          │ (Binary Stream)
-                                          ▼
-                                   [ PostgreSQL ] ──► [ NVMe SSD ]
-                                   (115,026 rows saved in 5s!)
-```
 * The client **does not wait for PostgreSQL or the SSD**.
-* The server accepts the write into in-process RAM channel in **0.1ms** and returns immediately.
-* A single background worker flushes records in **5,000-item binary batches**, avoiding single-row transaction commits.
+* The server accepts the write into an in-process RAM channel in **< 1ms** and returns immediately with `201 Created`.
+* A single background worker flushes records in **5,000-item binary batches** via `pgx.CopyFrom`, avoiding single-row transaction commits.
+* **Result**: **236,467 Sustained Writes/Second** persisting 115,026 rows in 5 seconds!
 
 ---
 
@@ -277,33 +263,7 @@ Here is the architectural reason visualized:
 
 The upcoming roadmap will complete the enterprise-grade production architecture:
 
-```
-                  ┌──────────────────────────────┐
-                  │   Incoming Client Traffic    │
-                  └──────────────┬───────────────┘
-                                 │
-                                 ▼
-                  ┌──────────────────────────────┐
-                  │    L4 / L7 Load Balancer     │ (Nginx / HAProxy / Envoy)
-                  └──────────────┬───────────────┘
-                                 │
-            ┌────────────────────┴────────────────────┐
-            ▼                                         ▼
-   [ Go Worker Node 1 ]                      [ Go Worker Node 2 ]
-   (1M RPS SO_REUSEPORT)                     (1M RPS SO_REUSEPORT)
-            │                                         │
-            └────────────────────┬────────────────────┘
-                                 │
-                     ┌───────────┴───────────┐
-                     ▼                       ▼
-            [ L1 In-Process RAM ]     [ L2 Redis Cluster ]
-             (15ns - 194K+ RPS)        (0.2ms TCP Socket)
-                     │                       │
-                     └───────────┬───────────┘
-                                 ▼
-                    [ L3 PostgreSQL Persistence ]
-                     (56K Read / 236K Batch Write)
-```
+![Enterprise Multi-Tier Caching & Load Balancing Architecture](./img/roadmap_architecture_white.png)
 
 1. **L2 Distributed Cache (Redis 8 Cluster):**
    * Connecting Go via high-throughput pipelining (`rueidis` connection pool).
