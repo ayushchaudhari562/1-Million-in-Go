@@ -1,6 +1,6 @@
 # 1 Million RPS in Go: Architecture, Benchmarks & Deep Internals
 
-A comprehensive technical study and benchmark progression comparing **Node.js** vs **Go (Golang)** on identical 10-Core (16-Thread) hardware, scaling from baseline to **843,549 Requests/Second**.
+A comprehensive technical study and benchmark progression comparing **Node.js** vs **Go (Golang)** on identical 10-Core (16-Thread) hardware, scaling from baseline to **1,006,176 Requests/Second (1 Million+ RPS)**.
 
 ---
 
@@ -18,7 +18,8 @@ Every benchmark below was recorded live on identical hardware:
 | **Go Milestone 2** | `GET /simple` (10 Cores) | Windows (`fasthttp` Pool) | 4.21 ms | 4.00 ms | **216,755 RPS** (Peak 231K)| 30.3 MB/s | 2.16M | Zero memory allocations (`sync.Pool`) |
 | **Go Milestone 3** | `GET /code-fast?id=42` | Windows (In-Process RAM) | 4.76 ms | 5.00 ms | **194,265 RPS** (Peak 201K)| **126.0 MB/s** | **1.94M (1.26 GB!)**| O(1) Contiguous RAM Lookup (15ns) serving 500-char JSON |
 | **Go Milestone 4** | `POST /code-write` | Windows (Buffered Channels)| 4.18 ms | 4.00 ms | **218,150 RPS** (Peak 229K)| 36.5 MB/s | **2.18M writes** | Non-blocking `chan Item`, zero-wait write behind |
-| **Go Milestone 5** | `GET /simple` (Native Linux)| **Kali Linux (Pure Epoll)** | **0.43 ms** | **144.00 us!** | **843,549.64 RPS!** | **112.63 MB/s**| **8.44M in 10s!** | **Zero Hyper-V overhead, C-based `wrk` load generation** |
+| **Go Milestone 5** | `GET /simple` (Native Linux)| Kali Linux (Pure Epoll) | 0.43 ms | 144.00 us! | **843,549.64 RPS** | 112.63 MB/s| 8.44M in 10s | Zero Hyper-V overhead, C-based `wrk` load generation |
+| **Go Milestone 6** | `GET /simple` (Multi-Socket) | **Kali Linux (SO_REUSEPORT)** | **0.41 ms** | **150.00 us!** | **1,006,176.34 RPS!** | **111.13 MB/s**| **10.02M in 10s!** | **Multi-Core `SO_REUSEPORT` kernel load balancing + Zero-allocation byte pipeline** |
 
 ---
 
@@ -153,6 +154,31 @@ Standard `net/http` allocates new memory on the heap for every single request:
 
 ---
 
+### D. The 1 Million RPS Milestone: Key Optimizations & Deep Internals
+
+To breach **1,000,000 Requests/Second**, the following low-level systems optimizations were implemented:
+
+#### 1. Multi-Core `SO_REUSEPORT` Architecture
+* **The Problem:** Standard servers run a single `net.Listener` on port 8081. When 16 CPU cores handle requests simultaneously, the Linux kernel enforces a single spinlock on `accept()`, causing core idling.
+* **The Optimization:** Using `github.com/valyala/fasthttp/reuseport`, we open **16 independent socket file descriptors** bound to port 8081. The Linux kernel TCP/IP stack hashes incoming connections directly to individual core queues, eliminating lock contention.
+
+#### 2. Zero-Allocation Binary Path Routing (`bytes.Equal`)
+* **The Problem:** Writing `switch string(ctx.Path())` forces Go to allocate a new immutable heap string from socket buffer bytes on every request (10 million allocations in 10s!).
+* **The Optimization:** Pre-allocating route byte slices (`pathSimple = []byte("/simple")`) and comparing directly via `bytes.Equal(path, pathSimple)` ensures **0 heap allocations**.
+
+#### 3. Bypassing Runtime Reflection (`fmt.Fprintf` ➔ `strconv.AppendInt`)
+* **The Problem:** `fmt.Fprintf(ctx, "...", id, code)` takes `...any` interface arguments. It invokes runtime reflection (`reflect.ValueOf`) to check data types, causing heavy heap boxing allocations.
+* **The Optimization:** Writing directly into the recycled response buffer (`b := ctx.Response.Body()[:0]`) and using `strconv.AppendInt(b, int64(id), 10)` converts numbers to ASCII bytes directly in CPU registers without memory allocation.
+
+#### 4. Zero-Copy Query Parameter Parsing
+* **The Problem:** Parsing query params via `strconv.Atoi(string(idBytes))` forces a string copy of query bytes.
+* **The Optimization:** Using `ctx.QueryArgs().GetUintOrZero("id")` reads the integer directly from the socket byte buffer.
+
+#### 5. Header Stripping
+* Disabled `Server: 1M-RPS-Server` response headers (`NoDefaultServerHeader: true`) to save byte formatting cycles across 10 million responses.
+
+---
+
 ## 8. Summary of All Milestone Achievements
 
 ```
@@ -174,5 +200,8 @@ Standard `net/http` allocates new memory on the heap for every single request:
 [ Go Channels Queue: 218,150 Writes/Sec (Peak 229K) ]
        │
        ▼ (Go Milestone 5: Native Linux Epoll + wrk)
-[ RECORD: 843,549.64 RPS | 144us P50 Latency | 8.44M Requests in 10s! ]
+[ Go Epoll Baseline: 843,549 RPS ]
+       │
+       ▼ (Go Milestone 6: SO_REUSEPORT + Zero-Allocation Pipeline)
+[ RECORD: 1,006,176.34 RPS | 150us P50 Latency | 10.02M Requests in 10s! ]
 ```

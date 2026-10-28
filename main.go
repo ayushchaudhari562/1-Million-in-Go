@@ -69,52 +69,65 @@ var (
 	pathCodeWrite = []byte("/code-write")
 )
 
-// RequestHandler handles incoming requests with zero allocations
 func fastHandler(ctx *fasthttp.RequestCtx) {
-	path := ctx.path();
-	if ctx.IsGet(){
-		if bytes.Equal(path,pathSimple){
-			ctx.Response.Header.SetContentTypeBytes(textPlain)
-			ctx.SetStatusCode(fasthttp.StatusOK)
+	path := ctx.Path();
+
+	if ctx.IsGet() {
+		if bytes.Equal(path, pathSimple) {
+			ctx.Response.Header.SetContentTypeBytes(textPlain);
+			ctx.SetStatusCode(fasthttp.StatusOK);
 			ctx.SetBody(okBytes);
-			return ;
-
-
+			return;
 		}
-		if bytes.Equal(path,pathCodeFast){
-			id := 1;
-			idBytes := ctx.QueryArgs().Peek("id");
-			if len(idBytes) > 0 {
-				if parsed, err := strconv.Atoi(string(idBytes)); err == nil && parsed >= 0 && parsed < TOTAL_RECORDS {
-					id = parsed;
-				}
+
+		if bytes.Equal(path, pathCodeFast) {
+			id := ctx.QueryArgs().GetUintOrZero("id");
+			if id <= 0 || id >= TOTAL_RECORDS {
+				id = 1;
 			}
+
 			code := memoryStore[id];
 			ctx.SetContentType("application/json");
 			ctx.SetStatusCode(fasthttp.StatusOK);
-			
-			fmt.Sprintf("{\"id\":%d,\"code\":%s}",id,code);
+
+			b := ctx.Response.Body()[:0];
+			b = append(b, `{"id":`...);
+			b = strconv.AppendInt(b, int64(id), 10);
+			b = append(b, `,"code":"`...);
+			b = append(b, code...);
+			b = append(b, `"}`...);
+			ctx.SetBody(b);
 			return;
 		}
 	}
+
 	if ctx.IsPost() {
 		if bytes.Equal(path, pathCodeWrite) {
-			newID := int(atomic.AddUint64(&totalWrites, 1))
-			newCode := generateDummyCode()
+			newID := int(atomic.AddUint64(&totalWrites, 1));
+			newCode := generateDummyCode();
+
 			if newID < TOTAL_RECORDS {
-				memoryStore[newID] = newCode
+				memoryStore[newID] = newCode;
 			}
+
 			select {
 			case writeQueue <- Item{ID: newID, Code: newCode}:
 			default:
 			}
-			ctx.SetContentType("application/json")
-			ctx.SetStatusCode(fasthttp.StatusCreated)
-			fmt.Fprintf(ctx, `{"status":"queued","id":%d}`, newID)
-			return
+
+			ctx.SetContentType("application/json");
+			ctx.SetStatusCode(fasthttp.StatusCreated);
+
+			b := ctx.Response.Body()[:0];
+			b = append(b, `{"status":"queued","id":`...);
+			b = strconv.AppendInt(b, int64(newID), 10);
+			b = append(b, '}');
+			ctx.SetBody(b);
+			return;
 		}
 	}
-	ctx.Error("Not Found", fasthttp.StatusNotFound)
+
+	ctx.Error("Not Found", fasthttp.StatusNotFound);
 }
 	
 
