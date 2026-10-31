@@ -134,6 +134,25 @@ To benchmark zero-allocation real JSON responses reading contiguous RAM at scale
 ulimit -n 65535; cp /mnt/c/Users/LOQ/Desktop/Golang/1\ Million\ in\ Go/server_linux ~/server_linux && chmod +x ~/server_linux && GOGC=off ~/server_linux & sleep 1; wrk -t9 -c250 -d10s --latency "http://127.0.0.1:8081/code-fast?id=42"; pkill -9 -f server_linux
 ```
 
+### Step 5: Benchmark Distributed L2 Redis Read (`/code-redis`)
+To test the L2 Distributed Cache powered by `rueidis` auto-pipelining & RESP3 client-side caching:
+
+1. **Start Redis Server** (if not already running):
+```bash
+sudo service redis-server start
+# or: redis-server --daemonize yes
+```
+
+2. **Pre-seed Redis with 10,000 Keys** (via pipelined background worker):
+```bash
+curl -X POST http://127.0.0.1:8081/redis-seed
+```
+
+3. **Run High-Concurrency Benchmark**:
+```bash
+wrk -t9 -c250 -d10s --latency "http://127.0.0.1:8081/code-redis?id=42"
+```
+
 ---
 
 ## 7. Deep-Dive: Core Engineering Concepts
@@ -259,17 +278,20 @@ Here is the architectural reason visualized:
 
 ---
 
-## 9. Next Phase: Multi-Tier Caching & Load Balancing Architecture
-
-The upcoming roadmap will complete the enterprise-grade production architecture:
+## 9. Multi-Tier Caching & Enterprise Architecture Status
 
 ![Enterprise Multi-Tier Caching & Load Balancing Architecture](./img/roadmap_architecture_white.png)
 
-1. **L2 Distributed Cache (Redis 8 Cluster):**
-   * Connecting Go via high-throughput pipelining (`rueidis` connection pool).
-   * Cache-aside reads and write-behind queue flushing into Redis.
-2. **Reverse Proxy Load Balancer:**
+1. **L2 Distributed Cache (Implemented with `rueidis`):**
+   * High-throughput automatic pipelining & RESP3 Client-Side Caching (128 MB local cache).
+   * **Cache-Aside Read (`GET /code-redis`):** L1 RAM $\rightarrow$ L2 Redis $\rightarrow$ L3 PostgreSQL fallback.
+   * **Pipelined Seeder (`POST /redis-seed`):** Pre-warms Redis with 10,000 records in pipelined chunks.
+   * **Write-Through (`POST /code-write`):** Concurrently updates L1 RAM, L2 Redis, and L3 channel queue.
+
+2. **Graceful Shutdown & Zero Data Loss (Implemented):**
+   * Traps `SIGINT` (`Ctrl+C`) and `SIGTERM`.
+   * Safely closes the 200,000-slot write channel, drains remaining queued items via `pgx.CopyFrom`, and closes Postgres/Redis pools cleanly without dropping a single write.
+
+3. **Upcoming Milestone: Reverse Proxy Load Balancer:**
    * Benchmarking Nginx / HAProxy / Envoy upstream proxy overhead against our bare-metal 1M RPS engine.
-3. **Graceful Shutdown & WAL Persistence:**
-   * Handling `SIGTERM` / `SIGINT` to safely drain buffered channels before termination.
 
